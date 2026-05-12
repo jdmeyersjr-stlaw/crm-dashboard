@@ -429,14 +429,21 @@
   .badge-gray { background: rgba(255,255,255,0.05); color: var(--text3); }
 
   /* CLIENT PANEL */
+  .right-col {
+    position: sticky;
+    top: 80px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border2) transparent;
+  }
+
   .client-panel {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 10px;
     overflow: hidden;
     height: fit-content;
-    position: sticky;
-    top: 80px;
   }
 
   .panel-header {
@@ -848,7 +855,7 @@
       </div>
 
       <!-- RIGHT: CLIENT PANEL + WIDGETS -->
-      <div>
+      <div class="right-col">
         <!-- CLIENT DETAIL -->
         <div class="client-panel" id="client-panel">
           <div class="empty-panel">
@@ -1197,7 +1204,7 @@ function applyFilters() {
     if (activeFilter === 'all') return true;
     if (activeFilter === 'outstanding') return p.balance > 0;
     if (activeFilter === 'Wedding') return ['Wedding','Wedding Photography','Wedding Videography'].includes(p.serviceType);
-    if (activeFilter === 'Signed') return p.txStatus === 'Signed' || p.contractStatus === 'Signed' || p.txStatus === 'Deposit Received' || p.contractStatus === 'Deposit Received';
+    if (activeFilter === 'Signed') { const isSigned = p.txStatus === 'Signed' || p.contractStatus === 'Signed' || p.txStatus === 'Deposit Received' || p.contractStatus === 'Deposit Received'; const isFuture = p.date && new Date(p.date + 'T00:00') >= today; return isSigned && isFuture; }
     if (activeFilter === 'Negotiating') return p.txStatus === 'Negotiating' || p.contractStatus === 'Negotiating';
     // Fix10: attention = signed/deposit received but has outstanding balance and date is past
     if (activeFilter === 'attention') {
@@ -1371,7 +1378,7 @@ function renderClientPanel() {
       </div>` : ''}
 
       <div class="panel-section">
-        <div class="panel-section-label">Client Notes</div>
+        <div class="panel-section-label">Client Notes <span style="color:var(--text3);font-weight:300;font-size:9px;letter-spacing:0.05em;">· saved in this browser</span></div>
         <textarea class="notes-area" id="notes-field" placeholder="Add notes about this client — preferences, how they found you, personality notes...">${savedNote}</textarea>
         <button class="save-note-btn" onclick="saveNote('${noteKey.replace(/'/g,"\\'")}')">Save Note</button>
         <div style="clear:both"></div>
