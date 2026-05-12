@@ -867,6 +867,27 @@
           </div>
         </div>
 
+        <!-- TOP CLIENTS -->
+        <div class="panel-card">
+          <div class="panel-card-head">
+            <span class="section-title">Top Clients &mdash; All Time</span>
+          </div>
+          <div class="panel-card-body">
+            <div id="top-clients-list"><div style="color:var(--text3);font-size:12px;">Loading...</div></div>
+          </div>
+        </div>
+
+        <!-- SERVICE BREAKDOWN -->
+        <div class="panel-card">
+          <div class="panel-card-head" style="display:flex;justify-content:space-between;align-items:center;">
+            <span class="section-title">Revenue by Type</span>
+            <span id="stat-alltime" style="font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);"></span>
+          </div>
+          <div class="panel-card-body">
+            <div id="type-breakdown"></div>
+          </div>
+        </div>
+
         <!-- MINI REVENUE CHART -->
         <div class="panel-card">
           <div class="panel-card-head">
@@ -899,43 +920,49 @@ let activeFilter = 'all';
 let selectedProject = null;
 let localNotes = {};
 
-// ─── NOTION PROPERTY HELPERS ─────────────────────────────
-function prop(page, name, type) {
-  const p = page.properties?.[name];
-  if (!p) return '';
-  switch(type) {
-    case 'title': return p.title?.map(t => t.plain_text).join('') || '';
-    case 'rich_text': return p.rich_text?.map(t => t.plain_text).join('') || '';
-    case 'date': return p.date?.start || '';
-    case 'number': return p.number ?? 0;
-    case 'select': return p.select?.name || '';
-    case 'formula': return p.formula?.number ?? p.formula?.string ?? '';
-  }
-  return '';
-}
-
+// ─── PARSE ───────────────────────────────────────────────
 function parseProject(page) {
   const props = page.properties || {};
-  // Find title property dynamically
-  let client = "";
+
+  // FIX B1/Fix1: Client is rich_text; page title is the Project ID in this DB
+  const getText = (name) => (props[name]?.rich_text || []).map(t => t.plain_text).join('').trim() || '';
+  const getSelect = (name) => props[name]?.select?.name || props[name]?.status?.name || '';
+  const getDate = (name) => props[name]?.date?.start || '';
+
+  // FIX B6/Fix2: robust number extraction handles number, formula (number+string), rollup
+  const getNum = (name) => {
+    const p = props[name];
+    if (!p) return 0;
+    if (p.type === 'number') return typeof p.number === 'number' ? p.number : 0;
+    if (p.type === 'formula') {
+      if (typeof p.formula?.number === 'number') return p.formula.number;
+      if (typeof p.formula?.string === 'string') return parseFloat(p.formula.string) || 0;
+      return 0;
+    }
+    if (p.type === 'rollup') return typeof p.rollup?.number === 'number' ? p.rollup.number : 0;
+    return 0;
+  };
+
+  // Title property = Project ID in this DB
+  let projectId = '';
   for (const key of Object.keys(props)) {
-    if (props[key].type === "title") {
-      client = (props[key].title || []).map(t => t.plain_text).join("") || "";
+    if (props[key].type === 'title') {
+      projectId = (props[key].title || []).map(t => t.plain_text).join('').trim();
       break;
     }
   }
-  const getNum = (name) => { const p = props[name]; if (!p) return 0; if (p.type === "number") return p.number ?? 0; if (p.type === "formula") return p.formula?.number ?? 0; return 0; };
-  const getSelect = (name) => props[name]?.select?.name || props[name]?.status?.name || "";
-  const getDate = (name) => props[name]?.date?.start || "";
-  const getText = (name) => (props[name]?.rich_text || []).map(t => t.plain_text).join("") || "";
+  if (!projectId) projectId = page.id.slice(0, 8).toUpperCase();
+
+  // Fix1: client is rich_text field named 'Client'
+  const client = getText('Client') || getText('Name') || '';
   const date = getDate('Service Date') || getDate('Date');
   const total = getNum('Total Value');
   const amtCol = getNum('Amount Collected');
+  // FIX B6: Balance Due is likely a formula
   const balance = getNum('Balance Due') || getNum('Balance');
   const txStatus = getSelect('Transaction Status');
   const contractStatus = getSelect('Contract Status');
   const serviceType = getSelect('Service Type') || getSelect('Type');
-  const projectId = getText('Project ID') || page.id?.slice(0,8).toUpperCase();
   const place = getText('Place') || getText('Location');
   const notes = getText('Notes');
 
@@ -946,10 +973,8 @@ function parseProject(page) {
 function connect() {
   token = document.getElementById('input-token').value.trim();
   dbId = document.getElementById('input-db').value.trim().replace(/-/g,'').replace(/.*\//,'').split('?')[0];
-
   if (!token || !dbId) { showError('Please enter both your token and database ID.'); return; }
   if (!token.startsWith('secret_') && !token.startsWith('ntn_')) { showError('Token should start with "secret_" or "ntn_"'); return; }
-
   localStorage.setItem('jdm_token', token);
   localStorage.setItem('jdm_db', dbId);
   syncData();
@@ -961,29 +986,17 @@ function showError(msg) {
   el.style.display = 'block';
 }
 
-// ─── API FETCH (via proxy for CORS) ──────────────────────
+// ─── API ─────────────────────────────────────────────────
 async function notionQuery(cursor = null) {
   const body = { page_size: 100, sorts: [{ property: 'Service Date', direction: 'descending' }] };
   if (cursor) body.start_cursor = cursor;
-
-  // Use corsproxy.io to bypass CORS for static HTML
   const url = `https://corsproxy.io/?https://api.notion.com/v1/databases/${dbId}/query`;
-
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-      'Notion-Version': '2022-06-28'
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'Notion-Version': '2022-06-28' },
     body: JSON.stringify(body)
   });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || `HTTP ${res.status}`);
-  }
-
+  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.message || `HTTP ${res.status}`); }
   return res.json();
 }
 
@@ -991,7 +1004,6 @@ async function syncData() {
   document.getElementById('sync-btn').disabled = true;
   document.getElementById('sync-btn').textContent = '↻ Syncing...';
   setStatus('syncing');
-
   document.getElementById('setup-panel').style.display = 'none';
   document.getElementById('dashboard').style.display = 'block';
   document.getElementById('table-loading').style.display = 'block';
@@ -999,25 +1011,21 @@ async function syncData() {
   document.getElementById('pagination').style.display = 'none';
 
   try {
-    let pages = [];
-    let cursor = null;
-    let hasMore = true;
-
+    let pages = [], cursor = null, hasMore = true;
     while (hasMore) {
       const data = await notionQuery(cursor);
       pages = pages.concat(data.results || []);
       hasMore = data.has_more;
       cursor = data.next_cursor;
     }
-
     allProjects = pages.map(parseProject);
     localNotes = JSON.parse(localStorage.getItem('jdm_notes') || '{}');
-
     computeStats();
     buildUpcoming();
     buildRevenueChart();
+    buildTopClients();   // Fix4
+    buildTypeBreakdown(); // Fix7
     applyFilters();
-
     setStatus('live');
     document.getElementById('offline-banner').style.display = 'block';
     showToast(`Synced ${allProjects.length} projects`);
@@ -1036,15 +1044,21 @@ async function syncData() {
 function computeStats() {
   const year = new Date().getFullYear();
   const yearStr = String(year);
+  let outstanding = 0, collected = 0, allTimeCollected = 0, weddings = 0, leads = 0, active = 0;
 
-  let outstanding = 0, collected = 0, weddings = 0, leads = 0, active = 0;
   for (const p of allProjects) {
     if (p.balance > 0) outstanding += p.balance;
     if (p.date?.startsWith(yearStr)) collected += p.amtCol;
-    if (p.serviceType === 'Wedding' && (p.contractStatus === 'Signed' || p.txStatus === 'Signed')) weddings++;
+    allTimeCollected += p.amtCol; // Fix9
+    if (p.serviceType === 'Wedding' && (p.contractStatus === 'Signed' || p.txStatus === 'Signed' || p.contractStatus === 'Deposit Received')) weddings++;
     if (p.txStatus === 'Negotiating' || p.contractStatus === 'Negotiating') leads++;
-    if (p.txStatus === 'Signed' || p.contractStatus === 'Signed') active++;
+    if (p.txStatus === 'Signed' || p.contractStatus === 'Signed' || p.txStatus === 'Deposit Received' || p.contractStatus === 'Deposit Received') active++;
   }
+
+  // Fix8: conversion rate
+  const signed = allProjects.filter(p => p.contractStatus === 'Signed' || p.contractStatus === 'Paid in Full' || p.contractStatus === 'Deposit Received').length;
+  const pool = allProjects.filter(p => p.txStatus !== 'Complimentary').length;
+  const convRate = pool > 0 ? Math.round((signed / pool) * 100) : 0;
 
   document.getElementById('stat-total').textContent = allProjects.length;
   document.getElementById('stat-active').textContent = active;
@@ -1053,13 +1067,17 @@ function computeStats() {
   document.getElementById('stat-weddings').textContent = weddings;
   document.getElementById('stat-leads').textContent = leads;
   document.getElementById('stat-year').textContent = yearStr;
+  // Fix9: all-time in type breakdown header
+  const el = document.getElementById('stat-alltime');
+  if (el) el.textContent = '$' + allTimeCollected.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}) + ' all time';
 }
 
 // ─── UPCOMING ────────────────────────────────────────────
 function buildUpcoming() {
   const today = new Date(); today.setHours(0,0,0,0);
+  // Fix B4: now that client name is fixed, upcoming shows real names
   const future = allProjects
-    .filter(p => p.date && new Date(p.date + 'T00:00') >= today && p.txStatus !== 'Cancelled')
+    .filter(p => p.date && new Date(p.date + 'T00:00') >= today && p.txStatus !== 'Cancelled' && p.contractStatus !== 'Cancelled/Lost')
     .sort((a,b) => a.date.localeCompare(b.date))
     .slice(0,6);
 
@@ -1070,29 +1088,30 @@ function buildUpcoming() {
     const d = new Date(p.date + 'T00:00');
     const mon = d.toLocaleString('default',{month:'short'}).toUpperCase();
     const day = d.getDate();
+    const displayName = p.client || p.projectId;
+    // Fix6: show pipeline age for negotiating upcoming
+    const daysOut = Math.round((new Date(p.date + 'T00:00') - today) / 86400000);
     return `<div class="upcoming-item">
       <div class="upcoming-date-box"><div class="upcoming-month">${mon}</div><div class="upcoming-day">${day}</div></div>
       <div class="upcoming-info">
-        <div class="upcoming-client">${p.client}</div>
-        <div class="upcoming-type">${p.serviceType || 'Photoshoot'} · ${p.place || '—'}</div>
+        <div class="upcoming-client">${displayName}</div>
+        <div class="upcoming-type">${p.serviceType || 'Photoshoot'} · ${daysOut === 0 ? 'Today' : daysOut + 'd away'}</div>
       </div>
       ${typeBadge(p.serviceType)}
     </div>`;
   }).join('');
 }
 
-// ─── REVENUE CHART ────────────────────────────────────────
+// ─── REVENUE CHART ───────────────────────────────────────
 function buildRevenueChart() {
   const year = new Date().getFullYear();
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const totals = Array(12).fill(0);
-
   for (const p of allProjects) {
     if (!p.date?.startsWith(String(year))) continue;
     const m = parseInt(p.date.split('-')[1]) - 1;
     totals[m] += p.amtCol;
   }
-
   const max = Math.max(...totals, 1);
   const el = document.getElementById('revenue-chart');
   el.innerHTML = totals.map((v,i) => {
@@ -1104,20 +1123,88 @@ function buildRevenueChart() {
   }).join('');
 }
 
-// ─── TABLE ───────────────────────────────────────────────
+// ─── FIX4: TOP CLIENTS ───────────────────────────────────
+function buildTopClients() {
+  const clientMap = {};
+  for (const p of allProjects) {
+    const name = p.client || p.projectId;
+    if (!clientMap[name]) clientMap[name] = { collected: 0, count: 0 };
+    clientMap[name].collected += p.amtCol;
+    clientMap[name].count++;
+  }
+  const top = Object.entries(clientMap)
+    .sort((a,b) => b[1].collected - a[1].collected)
+    .slice(0, 6);
+
+  const el = document.getElementById('top-clients-list');
+  if (!top.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px;">No data yet.</div>'; return; }
+  const maxVal = top[0][1].collected || 1;
+
+  el.innerHTML = top.map(([name, data]) => {
+    const pct = Math.round((data.collected / maxVal) * 100);
+    const initials = name.split(' ').filter(Boolean).map(w=>w[0]).join('').slice(0,2).toUpperCase() || '?';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);">
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--gold-dim);border:1px solid rgba(201,168,76,0.2);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:500;color:var(--gold);flex-shrink:0;">${initials}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${name}</div>
+        <div style="height:3px;background:var(--surface3);border-radius:2px;margin-top:4px;"><div style="height:3px;background:var(--gold);border-radius:2px;width:${pct}%;"></div></div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;">
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);">$${data.collected.toLocaleString()}</div>
+        <div style="font-size:10px;color:var(--text3);">${data.count} session${data.count !== 1 ? 's' : ''}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ─── FIX7: SERVICE TYPE BREAKDOWN ────────────────────────
+function buildTypeBreakdown() {
+  const typeMap = {};
+  for (const p of allProjects) {
+    const t = p.serviceType || 'Other';
+    if (!typeMap[t]) typeMap[t] = 0;
+    typeMap[t] += p.amtCol;
+  }
+  const sorted = Object.entries(typeMap).sort((a,b) => b[1]-a[1]);
+  const total = sorted.reduce((s,[,v]) => s+v, 0) || 1;
+  const colors = { 'Wedding': 'var(--purple)', 'Photoshoot': 'var(--blue)', 'Commercial': 'var(--amber)', 'Drone': 'var(--teal)', 'Video': 'var(--green)', 'Other': 'var(--text3)' };
+
+  const el = document.getElementById('type-breakdown');
+  el.innerHTML = sorted.map(([type, val]) => {
+    const pct = Math.round((val / total) * 100);
+    const color = colors[type] || 'var(--text2)';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);">
+      <div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></div>
+      <div style="flex:1;font-size:12px;color:var(--text2);">${type}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text);">$${val.toLocaleString()}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);width:30px;text-align:right;">${pct}%</div>
+    </div>`;
+  }).join('');
+}
+
+// ─── FILTERS & TABLE ─────────────────────────────────────
 function applyFilters() {
   const q = document.getElementById('search-input').value.toLowerCase();
+  const today = new Date(); today.setHours(0,0,0,0);
+  const thirtyDaysAgo = new Date(today - 30 * 86400000);
 
   filtered = allProjects.filter(p => {
     if (q) {
-      const haystack = [p.client, p.projectId, p.place, p.serviceType, p.txStatus, p.contractStatus].join(' ').toLowerCase();
+      // FIX B3/Fix3: trim+lowercase for matching
+      const haystack = [p.client, p.projectId, p.place, p.serviceType, p.txStatus, p.contractStatus].join(' ').toLowerCase().trim();
       if (!haystack.includes(q)) return false;
     }
     if (activeFilter === 'all') return true;
     if (activeFilter === 'outstanding') return p.balance > 0;
     if (activeFilter === 'Wedding') return p.serviceType === 'Wedding';
-    if (activeFilter === 'Signed') return p.txStatus === 'Signed' || p.contractStatus === 'Signed';
+    if (activeFilter === 'Signed') return p.txStatus === 'Signed' || p.contractStatus === 'Signed' || p.txStatus === 'Deposit Received' || p.contractStatus === 'Deposit Received';
     if (activeFilter === 'Negotiating') return p.txStatus === 'Negotiating' || p.contractStatus === 'Negotiating';
+    // Fix10: attention = signed/deposit received but has outstanding balance and date is past
+    if (activeFilter === 'attention') {
+      const isSigned = p.contractStatus === 'Signed' || p.contractStatus === 'Deposit Received' || p.txStatus === 'Signed' || p.txStatus === 'Deposit Received';
+      const isPast = p.date && new Date(p.date + 'T00:00') < today;
+      return isSigned && p.balance > 0 && isPast;
+    }
     return true;
   });
 
@@ -1129,6 +1216,9 @@ function applyFilters() {
 function sortFiltered() {
   filtered.sort((a,b) => {
     let av = a[sortField] ?? '', bv = b[sortField] ?? '';
+    // FIX B7: put blanks at bottom regardless of sort direction
+    if (av === '' && bv !== '') return 1;
+    if (bv === '' && av !== '') return -1;
     if (typeof av === 'number') return (av - bv) * sortDir;
     return String(av).localeCompare(String(bv)) * sortDir;
   });
@@ -1137,9 +1227,7 @@ function sortFiltered() {
 function sortBy(field) {
   if (sortField === field) sortDir *= -1;
   else { sortField = field; sortDir = -1; }
-  sortFiltered();
-  currentPage = 1;
-  renderTable();
+  sortFiltered(); currentPage = 1; renderTable();
 }
 
 function setFilter(f, btn) {
@@ -1153,22 +1241,41 @@ function renderTable() {
   const body = document.getElementById('table-body');
   const start = (currentPage - 1) * PAGE_SIZE;
   const page = filtered.slice(start, start + PAGE_SIZE);
+  const today = new Date(); today.setHours(0,0,0,0);
 
   document.getElementById('table-loading').style.display = 'none';
   document.getElementById('project-table').style.display = 'table';
-
   document.getElementById('row-count').textContent = `${filtered.length} of ${allProjects.length}`;
 
   body.innerHTML = page.map(p => {
-    const balance = p.balance > 0 ? `<span style="color:var(--amber)">$${p.balance.toLocaleString()}</span>` : `<span style="color:var(--text3)">—</span>`;
-    return `<tr onclick="selectProject('${p.id}')" class="${selectedProject?.id === p.id ? 'selected' : ''}">
-      <td class="client-name">${p.client || '—'}</td>
+    const balanceDisplay = p.balance > 0
+      ? `<span style="color:var(--amber)">$${p.balance.toLocaleString()}</span>`
+      : `<span style="color:var(--text3)">—</span>`;
+
+    // Fix5: overdue flag — has balance, is past, is signed
+    const isPast = p.date && new Date(p.date + 'T00:00') < today;
+    const isSigned = p.contractStatus === 'Signed' || p.contractStatus === 'Deposit Received' || p.txStatus === 'Signed' || p.txStatus === 'Deposit Received';
+    const isOverdue = p.balance > 0 && isPast && isSigned;
+
+    // Fix6: pipeline age for negotiating rows
+    let pipelineAge = '';
+    if (p.txStatus === 'Negotiating' || p.contractStatus === 'Negotiating') {
+      if (p.date) {
+        const days = Math.round((today - new Date(p.date + 'T00:00')) / 86400000);
+        if (days > 0) pipelineAge = `<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--amber);margin-left:4px;">${days}d</span>`;
+      }
+    }
+
+    const displayName = p.client || `<span style="color:var(--text3);font-style:italic;">${p.projectId}</span>`;
+
+    return `<tr onclick="selectProject('${p.id}')" class="${selectedProject?.id === p.id ? 'selected' : ''}" style="${isOverdue ? 'border-left:2px solid var(--amber);' : ''}">
+      <td class="client-name">${displayName}${isOverdue ? ' <span style="color:var(--amber);font-size:10px;">⚠</span>' : ''}</td>
       <td>${p.date ? formatDate(p.date) : '—'}</td>
       <td>${typeBadge(p.serviceType)}</td>
       <td>${contractBadge(p.contractStatus)}</td>
-      <td>${txBadge(p.txStatus)}</td>
+      <td>${txBadge(p.txStatus)}${pipelineAge}</td>
       <td class="amount">$${(p.total||0).toLocaleString()}</td>
-      <td class="amount">${balance}</td>
+      <td class="amount">${balanceDisplay}</td>
       <td class="project-id">${p.projectId}</td>
     </tr>`;
   }).join('');
@@ -1181,15 +1288,10 @@ function renderTable() {
     document.getElementById('pg-info').textContent = `Page ${currentPage} of ${pages}`;
     document.getElementById('pg-prev').disabled = currentPage === 1;
     document.getElementById('pg-next').disabled = currentPage === pages;
-  } else {
-    pg.style.display = 'none';
-  }
+  } else { pg.style.display = 'none'; }
 }
 
-function changePage(dir) {
-  currentPage += dir;
-  renderTable();
-}
+function changePage(dir) { currentPage += dir; renderTable(); }
 
 // ─── CLIENT PANEL ─────────────────────────────────────────
 function selectProject(id) {
@@ -1203,20 +1305,42 @@ function renderClientPanel() {
   const panel = document.getElementById('client-panel');
   if (!p) return;
 
-  const clientHistory = allProjects.filter(x => x.client === p.client && x.id !== p.id)
-    .sort((a,b) => b.date?.localeCompare(a.date || '') || 0)
+  // FIX B3/Fix3: case-insensitive, trimmed client matching
+  const clientKey = p.client.trim().toLowerCase();
+  const clientHistory = allProjects
+    .filter(x => x.id !== p.id && x.client.trim().toLowerCase() === clientKey && clientKey !== '')
+    .sort((a,b) => (b.date || '').localeCompare(a.date || ''))
     .slice(0, 5);
 
   const isReturn = clientHistory.length > 0;
-  const initials = p.client.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-  const savedNote = localNotes[p.client] || '';
-  const totalSpent = allProjects.filter(x => x.client === p.client).reduce((s,x) => s + x.amtCol, 0);
+  const displayName = p.client || p.projectId;
+
+  // FIX B2: safe initials — handle empty/single word names
+  const words = displayName.split(' ').filter(Boolean);
+  const initials = words.length >= 2
+    ? (words[0][0] + words[words.length-1][0]).toUpperCase()
+    : (words[0]?.[0] || '?').toUpperCase();
+
+  // FIX B5: key notes to projectId when client name blank, else client name
+  const noteKey = p.client.trim() || p.id;
+  const savedNote = localNotes[noteKey] || '';
+  const totalSpent = allProjects
+    .filter(x => clientKey !== '' && x.client.trim().toLowerCase() === clientKey)
+    .reduce((s,x) => s + x.amtCol, 0);
+
+  // Fix6: pipeline age in panel
+  const today = new Date(); today.setHours(0,0,0,0);
+  let pipelineInfo = '';
+  if ((p.txStatus === 'Negotiating' || p.contractStatus === 'Negotiating') && p.date) {
+    const days = Math.round((today - new Date(p.date + 'T00:00')) / 86400000);
+    if (days > 0) pipelineInfo = `<div class="panel-row"><span class="panel-row-label">In Pipeline</span><span class="panel-row-val" style="color:var(--amber)">${days} days</span></div>`;
+  }
 
   panel.innerHTML = `
     <div class="panel-header">
       <div class="panel-avatar">${initials}</div>
-      <div class="panel-name">${p.client}</div>
-      <div class="panel-meta">${isReturn ? `↩ Return client · ${clientHistory.length+1} sessions` : 'First session'} ${p.place ? '· ' + p.place : ''}</div>
+      <div class="panel-name">${displayName}</div>
+      <div class="panel-meta">${isReturn ? `↩ Return client · ${clientHistory.length+1} sessions` : 'First session'}${p.place ? ' · ' + p.place : ''}</div>
     </div>
     <div class="panel-body">
       <div class="panel-section">
@@ -1225,6 +1349,7 @@ function renderClientPanel() {
         <div class="panel-row"><span class="panel-row-label">Service</span><span class="panel-row-val">${p.serviceType || '—'}</span></div>
         <div class="panel-row"><span class="panel-row-label">Contract</span><span>${contractBadge(p.contractStatus)}</span></div>
         <div class="panel-row"><span class="panel-row-label">Payment</span><span>${txBadge(p.txStatus)}</span></div>
+        ${pipelineInfo}
         <div class="panel-row"><span class="panel-row-label">Total Value</span><span class="panel-row-val">$${(p.total||0).toLocaleString()}</span></div>
         <div class="panel-row"><span class="panel-row-label">Collected</span><span class="panel-row-val" style="color:var(--green)">$${(p.amtCol||0).toLocaleString()}</span></div>
         ${p.balance > 0 ? `<div class="panel-row"><span class="panel-row-label">Outstanding</span><span class="panel-row-val" style="color:var(--amber)">$${p.balance.toLocaleString()}</span></div>` : ''}
@@ -1248,47 +1373,36 @@ function renderClientPanel() {
       <div class="panel-section">
         <div class="panel-section-label">Client Notes</div>
         <textarea class="notes-area" id="notes-field" placeholder="Add notes about this client — preferences, how they found you, personality notes...">${savedNote}</textarea>
-        <button class="save-note-btn" onclick="saveNote('${p.client}')">Save Note</button>
+        <button class="save-note-btn" onclick="saveNote('${noteKey.replace(/'/g,"\\'")}')">Save Note</button>
         <div style="clear:both"></div>
       </div>
     </div>
   `;
 }
 
-function saveNote(client) {
+// FIX B5: save note keyed to noteKey not just client name
+function saveNote(key) {
   const note = document.getElementById('notes-field').value;
-  localNotes[client] = note;
+  localNotes[key] = note;
   localStorage.setItem('jdm_notes', JSON.stringify(localNotes));
-  showToast('Note saved locally');
+  showToast('Note saved');
 }
 
 // ─── BADGES ───────────────────────────────────────────────
 function txBadge(s) {
-  const map = {
-    'Paid': 'green', 'Paid in Full': 'green',
-    'Signed': 'blue', 'Deposit Received': 'teal',
-    'Complimentary': 'gray', 'Negotiating': 'amber',
-    'Cancelled': 'red', 'Cancelled/Lost': 'red',
-    'Sent': 'purple', 'Awaiting Availability': 'amber',
-    'Not Started': 'gray'
-  };
+  const map = { 'Paid':'green','Paid in Full':'green','Signed':'blue','Deposit Received':'teal','Complimentary':'gray','Negotiating':'amber','Cancelled':'red','Cancelled/Lost':'red','Sent':'purple','Awaiting Availability':'amber','Not Started':'gray','Paid':'green' };
   const cls = map[s] || 'gray';
   return s ? `<span class="badge badge-${cls}">${s}</span>` : '<span class="badge badge-gray">—</span>';
 }
 
 function contractBadge(s) {
-  const map = {
-    'Paid in Full': 'green', 'Signed': 'blue',
-    'Deposit Received': 'teal', 'Not Started': 'gray',
-    'Cancelled/Lost': 'red', 'Negotiating': 'amber',
-    'Sent': 'purple', 'Complimentary': 'gray'
-  };
+  const map = { 'Paid in Full':'green','Signed':'blue','Deposit Received':'teal','Not Started':'gray','Cancelled/Lost':'red','Negotiating':'amber','Sent':'purple','Complimentary':'gray' };
   const cls = map[s] || 'gray';
   return s ? `<span class="badge badge-${cls}">${s}</span>` : '<span class="badge badge-gray">—</span>';
 }
 
 function typeBadge(s) {
-  const map = { 'Wedding': 'purple', 'Drone': 'teal', 'Commercial': 'amber', 'Photoshoot': 'blue', 'Video': 'green' };
+  const map = { 'Wedding':'purple','Drone':'teal','Commercial':'amber','Photoshoot':'blue','Video':'green','Project':'gray' };
   const cls = map[s] || 'gray';
   return s ? `<span class="badge badge-${cls}">${s}</span>` : '';
 }
