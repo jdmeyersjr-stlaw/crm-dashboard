@@ -1042,6 +1042,7 @@
                 <th onclick="sortBy('transaction')">Payment</th>
                 <th onclick="sortBy('total')">Total ↕</th>
                 <th onclick="sortBy('balance')">Owed ↕</th>
+                <th style="text-align:center;">Done</th>
                 <th onclick="sortBy('id')">ID</th>
               </tr>
             </thead>
@@ -1624,7 +1625,22 @@ function renderTable() {
 
     const displayName = p.client || `<span style="color:var(--text3);font-style:italic;">${p.projectId}</span>`;
 
-    return `<tr onclick="selectProject('${p.id}')" class="${selectedProject?.id === p.id ? 'selected' : ''}" style="${isOverdue ? 'border-left:2px solid var(--amber);' : ''}">
+    // Fulfilled indicator for table
+    const needsDelivery = isSigned && !p.fulfilled && !p.txStatus.includes('Cancelled');
+    const isFuture = p.date && new Date(p.date + 'T00:00') >= today;
+    // Only highlight unfulfilled for signed projects (past or future — if signed and not done, show it)
+    // Subtle teal-ish left border + very faint row tint
+    let rowStyle = '';
+    if (isOverdue) rowStyle = 'border-left:2px solid var(--amber);';
+    else if (needsDelivery) rowStyle = 'border-left:2px solid rgba(45,212,191,0.5);background:rgba(45,212,191,0.025);';
+
+    const fulfilledCell = isSigned
+      ? (p.fulfilled
+          ? `<span style="color:var(--green);font-size:11px;" title="Fulfilled">✓</span>`
+          : `<span style="color:rgba(45,212,191,0.5);font-size:11px;" title="Not yet fulfilled">○</span>`)
+      : `<span style="color:var(--text3);font-size:11px;">—</span>`;
+
+    return `<tr onclick="selectProject('${p.id}')" class="${selectedProject?.id === p.id ? 'selected' : ''}" style="${rowStyle}">
       <td class="client-name">${displayName}${isOverdue ? ' <span style="color:var(--amber);font-size:10px;">⚠</span>' : ''}</td>
       <td>${p.date ? formatDate(p.date) : '—'}</td>
       <td>${typeBadge(p.serviceType)}</td>
@@ -1632,6 +1648,7 @@ function renderTable() {
       <td>${txBadge(p.txStatus)}${pipelineAge}</td>
       <td class="amount">$${(p.total||0).toLocaleString()}</td>
       <td class="amount">${balanceDisplay}</td>
+      <td style="text-align:center;">${fulfilledCell}</td>
       <td class="project-id">${p.projectId}</td>
     </tr>`;
   }).join('');
@@ -1661,6 +1678,8 @@ function renderClientPanel() {
   const panel = document.getElementById('client-panel');
   if (!p) return;
 
+  // local signed helper (analytics isSigned defined later)
+  const _isSigned = (proj) => ['Signed','Deposit Received','Paid in Full'].includes(proj.contractStatus) || ['Signed','Deposit Received'].includes(proj.txStatus);
   // FIX B3/Fix3: case-insensitive, trimmed client matching
   const clientKey = p.client.trim().toLowerCase();
   const clientHistory = allProjects
@@ -1710,6 +1729,13 @@ function renderClientPanel() {
         <div class="panel-row"><span class="panel-row-label">Collected</span><span class="panel-row-val" style="color:var(--green)">$${(p.amtCol||0).toLocaleString()}</span></div>
         ${p.balance > 0 ? `<div class="panel-row"><span class="panel-row-label">Outstanding</span><span class="panel-row-val" style="color:var(--amber)">$${p.balance.toLocaleString()}</span></div>` : ''}
         <div class="panel-row"><span class="panel-row-label">Location</span><span class="panel-row-val" style="font-size:12px;max-width:160px;text-align:right">${p.place || '—'}</span></div>
+        ${_isSigned(p) ? `<div class="panel-row">
+          <span class="panel-row-label">Fulfilled</span>
+          <span>${p.fulfilled
+            ? '<span style="display:inline-flex;align-items:center;gap:5px;color:var(--green);font-size:13px;font-weight:500;">✓ <span style=\'font-size:11px;\'>Delivered</span></span>'
+            : '<span style="display:inline-flex;align-items:center;gap:5px;color:var(--teal);font-size:13px;opacity:0.7;">○ <span style=\'font-size:11px;color:var(--text3);\'>Pending delivery</span></span>'
+          }</span>
+        </div>` : ''}
       </div>
 
       ${isReturn ? `
@@ -1721,7 +1747,7 @@ function renderClientPanel() {
               <span class="history-item-id">${h.projectId}</span>
               <span class="history-item-date">${h.date ? formatDate(h.date) : '—'}</span>
             </div>
-            <div class="history-item-type">${h.serviceType || '—'} · $${(h.total||0).toLocaleString()} ${txBadge(h.txStatus)}</div>
+            <div class="history-item-type">${h.serviceType || '—'} · $${(h.total||0).toLocaleString()} ${txBadge(h.txStatus)} ${h.fulfilled ? '<span style="color:var(--green);font-size:10px;margin-left:2px;">✓</span>' : (_isSigned(h) ? '<span style="color:var(--teal);font-size:10px;opacity:0.6;margin-left:2px;">○</span>' : '')}</div>
           </div>
         `).join('')}
       </div>` : ''}
