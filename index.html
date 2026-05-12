@@ -915,18 +915,29 @@ function prop(page, name, type) {
 }
 
 function parseProject(page) {
-  // Try common property name variants
-  const client = prop(page,'Client','title') || prop(page,'Name','title') || prop(page,'client','title');
-  const date = prop(page,'Service Date','date') || prop(page,'Date','date') || prop(page,'date','date');
-  const total = Number(prop(page,'Total Value','number') || prop(page,'Total V...','number') || prop(page,'total_value','number') || 0);
-  const amtCol = Number(prop(page,'Amount Col...','number') || prop(page,'Amount Collected','number') || prop(page,'amount_collected','number') || 0);
-  const balance = Number(prop(page,'Balance','number') || prop(page,'Balan...','number') || prop(page,'balance','number') || 0);
-  const txStatus = prop(page,'Transaction Status','select') || prop(page,'transaction_status','select');
-  const contractStatus = prop(page,'Contract Status','select') || prop(page,'contract_status','select');
-  const serviceType = prop(page,'Service Type','select') || prop(page,'service_type','select') || prop(page,'Type','select');
-  const projectId = prop(page,'Project ID','rich_text') || prop(page,'project_id','rich_text') || page.id?.slice(0,8).toUpperCase();
-  const place = prop(page,'Place','rich_text') || prop(page,'Location','rich_text') || prop(page,'location','rich_text');
-  const notes = prop(page,'Notes','rich_text') || prop(page,'notes','rich_text') || '';
+  const props = page.properties || {};
+  // Find title property dynamically
+  let client = "";
+  for (const key of Object.keys(props)) {
+    if (props[key].type === "title") {
+      client = (props[key].title || []).map(t => t.plain_text).join("") || "";
+      break;
+    }
+  }
+  const getNum = (name) => { const p = props[name]; if (!p) return 0; if (p.type === "number") return p.number ?? 0; if (p.type === "formula") return p.formula?.number ?? 0; return 0; };
+  const getSelect = (name) => props[name]?.select?.name || props[name]?.status?.name || "";
+  const getDate = (name) => props[name]?.date?.start || "";
+  const getText = (name) => (props[name]?.rich_text || []).map(t => t.plain_text).join("") || "";
+  const date = getDate('Service Date') || getDate('Date');
+  const total = getNum('Total Value');
+  const amtCol = getNum('Amount Collected');
+  const balance = getNum('Balance Due') || getNum('Balance');
+  const txStatus = getSelect('Transaction Status');
+  const contractStatus = getSelect('Contract Status');
+  const serviceType = getSelect('Service Type') || getSelect('Type');
+  const projectId = getText('Project ID') || page.id?.slice(0,8).toUpperCase();
+  const place = getText('Place') || getText('Location');
+  const notes = getText('Notes');
 
   return { id: page.id, client, date, total, amtCol, balance, txStatus, contractStatus, serviceType, projectId, place, notes, raw: page };
 }
