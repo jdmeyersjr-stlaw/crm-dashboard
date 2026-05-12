@@ -729,7 +729,7 @@
   </header>
 
   <div class="offline-banner" id="offline-banner">
-    ⚠ Using proxy — CORS bypass active. Data is live from Notion.
+    ⚠ Running via CORS proxy — data is live from Notion.
   </div>
 
   <!-- SETUP -->
@@ -955,8 +955,8 @@ async function notionQuery(cursor = null) {
   const body = { page_size: 100, sorts: [{ property: 'Service Date', direction: 'descending' }] };
   if (cursor) body.start_cursor = cursor;
 
-  // Use allorigins proxy to bypass CORS for static HTML
-  const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://api.notion.com/v1/databases/${dbId}/query`)}`;
+  // Use corsproxy.io to bypass CORS for static HTML
+  const url = `https://corsproxy.io/?https://api.notion.com/v1/databases/${dbId}/query`;
 
   const res = await fetch(url, {
     method: 'POST',
