@@ -1050,7 +1050,7 @@ function computeStats() {
     if (p.balance > 0) outstanding += p.balance;
     if (p.date?.startsWith(yearStr)) collected += p.amtCol;
     allTimeCollected += p.amtCol; // Fix9
-    if (p.serviceType === 'Wedding' && (p.contractStatus === 'Signed' || p.txStatus === 'Signed' || p.contractStatus === 'Deposit Received')) weddings++;
+    if (['Wedding','Wedding Photography','Wedding Videography'].includes(p.serviceType) && (p.contractStatus === 'Signed' || p.txStatus === 'Signed' || p.contractStatus === 'Deposit Received')) weddings++;
     if (p.txStatus === 'Negotiating' || p.contractStatus === 'Negotiating') leads++;
     if (p.txStatus === 'Signed' || p.contractStatus === 'Signed' || p.txStatus === 'Deposit Received' || p.contractStatus === 'Deposit Received') active++;
   }
@@ -1167,7 +1167,7 @@ function buildTypeBreakdown() {
   }
   const sorted = Object.entries(typeMap).sort((a,b) => b[1]-a[1]);
   const total = sorted.reduce((s,[,v]) => s+v, 0) || 1;
-  const colors = { 'Wedding': 'var(--purple)', 'Photoshoot': 'var(--blue)', 'Commercial': 'var(--amber)', 'Drone': 'var(--teal)', 'Video': 'var(--green)', 'Other': 'var(--text3)' };
+  const colors = { 'Wedding': 'var(--purple)', 'Wedding Photography': 'var(--purple)', 'Wedding Videography': 'var(--green)', 'Videography': 'var(--green)', 'Photoshoot': 'var(--blue)', 'Commercial': 'var(--amber)', 'Drone': 'var(--teal)', 'Video': 'var(--green)', 'Other': 'var(--text3)' };
 
   const el = document.getElementById('type-breakdown');
   el.innerHTML = sorted.map(([type, val]) => {
@@ -1196,7 +1196,7 @@ function applyFilters() {
     }
     if (activeFilter === 'all') return true;
     if (activeFilter === 'outstanding') return p.balance > 0;
-    if (activeFilter === 'Wedding') return p.serviceType === 'Wedding';
+    if (activeFilter === 'Wedding') return ['Wedding','Wedding Photography','Wedding Videography'].includes(p.serviceType);
     if (activeFilter === 'Signed') return p.txStatus === 'Signed' || p.contractStatus === 'Signed' || p.txStatus === 'Deposit Received' || p.contractStatus === 'Deposit Received';
     if (activeFilter === 'Negotiating') return p.txStatus === 'Negotiating' || p.contractStatus === 'Negotiating';
     // Fix10: attention = signed/deposit received but has outstanding balance and date is past
@@ -1402,7 +1402,7 @@ function contractBadge(s) {
 }
 
 function typeBadge(s) {
-  const map = { 'Wedding':'purple','Drone':'teal','Commercial':'amber','Photoshoot':'blue','Video':'green','Project':'gray' };
+  const map = { 'Wedding':'purple','Wedding Photography':'purple','Wedding Videography':'green','Videography':'green','Drone':'teal','Commercial':'amber','Photoshoot':'blue','Video':'green','Project':'gray' };
   const cls = map[s] || 'gray';
   return s ? `<span class="badge badge-${cls}">${s}</span>` : '';
 }
